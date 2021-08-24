@@ -6,7 +6,7 @@ function printFontsAss() {
 	# Main styles
 	grep '^Style: *' "$1" | awk -F',' '{print $2}'
 	# Fonts embedded in lines with "\fn"
-	sed -En 's/.*\\fn([^\\}]*)[\\}].*/\1/gp' "$1"
+	grep -Eho '\\fn[^\\}]*[\\}]' "$1" | sed -E 's/\\fn(.*)./\1/'
 }
 
 printFontsAss "$1"
