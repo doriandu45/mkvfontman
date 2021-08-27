@@ -70,63 +70,212 @@ function printAttachedFontsMatroska() {
 	done
 }
 
+# Parse missing, used and unused fonts from a Matroska container passed as $1
+function parseMkv() {
+	json="$(mkvmerge -J "$1")"
+	local IFS="$nl"
+	availableFonts=( $(printAttachedFontsMatroska "$1") )
+	neededFonts=( $(printUsedFontsMatroska "$1" | sort | uniq) )
+	missingFonts=( "${neededFonts[@]}" )
+	uselessFonts=( "${availableFonts[@]}" )
+	
+	parseFontList
+}
+
+# Parse missing and useless fonts by using availableFonts and neededFonts
+function parseFontList() {
+	local IFS="$nl"
+	for testedFont in "${neededFonts[@]}"
+	do
+		# Looks trough each embedded font
+		local foundFont=false
+		for testedEmbeddedFont in "${availableFonts[@]}"
+		do
+			IFS=";"
+			read embeddedFilename embeddedFontNames<<<$testedEmbeddedFont
+			IFS=","
+			for testedEmbeddedFontname in $embeddedFontNames
+			do
+				if [[ "$testedEmbeddedFontname" = "$testedFont" ]]
+				then
+					usedFonts+=( "${embeddedFilename} ($testedEmbeddedFontname)" )
+					IFS="$nl"
+					# We remove the font from the missing list
+					for i in "${!missingFonts[@]}"
+					do
+						if [[ "${missingFonts[$i]}" = "$testedEmbeddedFontname" ]]
+						then
+							unset "missingFonts[$i]"
+							break
+						fi
+					done
+					# We remove the font from the useless list
+					for i in "${!uselessFonts[@]}"
+					do
+						IFS=";"
+						read fontFilename fontNames<<<"${uselessFonts[$i]}"
+						if [[ "$fontFilename" = "$embeddedFilename" ]]
+						then
+							unset "uselessFonts[$i]"
+							break
+						fi
+					done
+					foundFont=true
+					break
+				fi
+			done
+			[[ $foundFont = true ]] && break
+		done
+	done
+}
+
+# Parse the font store for missing font to add.
+# Takes the font list in missingFonts and adds the files to fontsToAdd
+# TODO: Use a lookup table instead of scanning each file in the fontstore each time we want to add a font
+function parseFontStore() {
+	local IFS="$nl"
+	for file in $(ls fontstore)
+	do
+		local fontName="$(fc-scan "fontstore/$file" -f "%{family}\n")"
+		local foundFont=false
+		IFS=","
+		for testedFontName in $fontName
+		do
+			IFS="$nl"
+			for testedMissingFont in "${missingFonts[@]}"
+			do
+				if [[ "$testedMissingFont" = "$testedFontName" ]]
+				then
+					fontsToAdd+=( "$file" )
+					foundFont=true
+					# We remove the font from the missing list
+					for i in "${!missingFonts[@]}"
+					do
+						if [[ "${missingFonts[$i]}" = "$testedMissingFont" ]]
+						then
+							unset "missingFonts[$i]"
+							break
+						fi
+					done
+					break
+				fi
+			done
+			[[ foundFont = true ]] && break
+		done
+	done
+}
+
+# Clean a Matroska file passed as $1 by removing the fonts in uselessFonts and adding the ones in fontsToAdd
+# json must be set with "mkvmerge -J" so we only pasre the mkv once
+function cleanMatroska() {
+	# If for some reason we have nothing to do
+	[[ "${#fontsToAdd[@]}" = "0" &&  "${#uselessFonts[@]}" = "0" ]] && return
+	printf '[\n'>"./mkvmegreArgs.tmp"
+	# Remove useless fonts
+	if [[ "${#uselessFonts[@]}" != "0" ]]
+	then
+		printf '\t"--attachments",\n'>>"./mkvmegreArgs.tmp"
+		printf '\t"!'>>"./mkvmegreArgs.tmp"
+		local IFS="$nl"
+		local attachFiles="$(echo $json | jq -r '.attachments  | map(  (.id | tostring) +";" + .file_name ) | join("\n") ')"
+		for toRemove in "${uselessFonts[@]}"
+		do
+			# Useless fonts are separated by ';'
+			IFS=";"
+			read fontFile fontNames<<<$toRemove
+			IFS="$nl"
+			for file in $attachFiles
+			do
+				local IFS=";"
+				local id name
+				read id name<<<$file
+				printf $id>>"./mkvmegreArgs.tmp"
+				# If it's not the last file
+				[[ "$file" = "$(tail -n 1 <<<$attachFiles)" ]] || printf ','>>"./mkvmegreArgs.tmp"
+			done
+			printf '"'>>"./mkvmegreArgs.tmp"
+			[[ "${#fontsToAdd[@]}" != "0" ]] && printf ','>>"./mkvmegreArgs.tmp"
+			printf '\n'>>"./mkvmegreArgs.tmp"
+		done
+	fi
+	
+	# Add missing fonts
+	if [[ "${#fontsToAdd[@]}" != "0" ]]
+	then
+		for file in "${fontsToAdd[@]}"
+		do
+			mime="$(file --mime-type -b "fontstore/$file")"
+			printf '\t"--attachment-name",\n'>>"./mkvmegreArgs.tmp"
+			printf '\t"%s",\n' "$file">>"./mkvmegreArgs.tmp"
+			printf '\t"--attachment-mime-type",\n'>>"./mkvmegreArgs.tmp"
+			printf '\t"%s",\n' "$mime">>"./mkvmegreArgs.tmp"
+			printf '\t"--attach-file",\n'>>"./mkvmegreArgs.tmp"
+			printf '\t"fontstore/%s"' "$file">>"./mkvmegreArgs.tmp"
+			# If it's not the last file
+			[[ "$file" = "${fontsToAdd[-1]}" ]] || printf ','>>"./mkvmegreArgs.tmp"
+			printf '\n'>>"./mkvmegreArgs.tmp"
+		done
+	fi
+	printf ']'>>"./mkvmegreArgs.tmp"
+	mkvmerge -o "${1%.*}_clean.${1: -3}" "$1" @"./mkvmegreArgs.tmp"
+	
+}
+
 declare -a missingFonts
 declare -a usedFonts
 declare -a uselessFonts
-declare -a embeddedFonts
+declare -a availableFonts
 
 declare -a neededFonts
+declare -a fontsToAdd
 
-json="$(mkvmerge -J "$1")"
-IFS="$nl"
-embeddedFonts=( $(printAttachedFontsMatroska "$1") )
-neededFonts=( $(printUsedFontsMatroska "$1" | sort | uniq) )
-missingFonts=( "${neededFonts[@]}" )
-uselessFonts=( "${embeddedFonts[@]}" )
+# Arguments parsing
 
-for testedFont in "${neededFonts[@]}"
-do
-	# Looks trough each embedded font
-	foundFont=false
-	for testedEmbeddedFont in "${embeddedFonts[@]}"
-	do
-		IFS=";"
-		read embeddedFilename embeddedFontNames<<<$testedEmbeddedFont
-		IFS=","
-		for testedEmbeddedFontname in $embeddedFontNames
-		do
-			if [[ "$testedEmbeddedFontname" = "$testedFont" ]]
-			then
-				usedFonts+=( "${embeddedFilename} ($testedEmbeddedFontname)" )
-				IFS="$nl"
-				# We remove the font from the missing list
-				for i in "${!missingFonts[@]}"
-				do
-					if [[ "${missingFonts[$i]}" = "$testedEmbeddedFontname" ]]
-					then
-						unset "missingFonts[$i]"
-						break
-					fi
-				done
-				# We remove the font from the useless list
-				for i in "${!uselessFonts[@]}"
-				do
-					IFS=";"
-					read fontFilename fontNames<<<"${uselessFonts[$i]}"
-					if [[ "$fontFilename" = "$testedEmbeddedFontname" ]]
-					then
-						unset "uselessFonts[$i]"
-						break
-					fi
-				done
-				foundFont=true
-				break
-			fi
-		done
-		[[ $foundFont = true ]] && break
-	done
-done
-
-printf "\e[32mUsed fonts: %s\n" "${usedFonts[@]}"
-printf "\e[31mMissing fonts: %s\n" "${missingFonts[@]}"
-printf "\e[1;33mUseless fonts: %s\e[0m\n" "${uselessFonts[@]}"
+case "$1" in
+	"list") # Lists all fonts
+	case "${2: -3}" in
+		"mkv" | "mks" | "mka")
+			parseMkv "$2"
+			printf "\e[32mUsed fonts: %s\n" "${usedFonts[@]}"
+			printf "\e[31mMissing fonts: %s\n" "${missingFonts[@]}"
+			printf "\e[1;33mUseless fonts: %s\e[0m\n" "${uselessFonts[@]}"
+		;;
+		"ass" | "ssa")
+			#TODO
+			echo "This will be added soon(TM)"
+		;;
+		*)
+			echo "ERROR: Unknown extension for $2">&2
+			echo "Only mkv/mka/mks and ass/ssa are supported in list mode">&2
+			exit 1
+		;;
+	esac
+	;;
+	"autoclean")
+		if ! [[ "${2: -3}" = "mkv" || "${2: -3}" = "mks" || "${2: -3}" = "mka" ]]
+		then
+			echo "ERROR: Unknown extension for $2">&2
+			echo "Only mkv/mka/mks are supported in autoclean mode">&2
+			exit 1
+		fi
+		parseMkv "$2"
+		parseFontStore
+		printf "\e[32mFonts to add: %s\n" "${fontsToAdd[@]}"
+		printf "\e[1;33mUseless fonts (will be removed): %s\n" "${uselessFonts[@]}"
+		printf "\e[1;31mMissing fonts (not in fontstore): %s\e[0m\n" "${missingFonts[@]}"
+		cleanMatroska "$2"
+		
+	;;
+	"help" | "-h" | "--help" | "?" | "-?")
+		echo "More helpfull help message will come soon(TM)"
+		echo "For now, you can use:"
+		echo "$0 <list | autoclean> <file>"
+		echo "list: only list the fonts from a file"
+		echo "autoclean: automatically remove useless fonts and add missing font if they are present in the fontstore"
+	;;
+	*)
+		echo "ERROR: Unknown function $1">&2
+		echo "See $0 help for more details">&2
+		exit 1
+	;;
+esac
