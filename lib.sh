@@ -22,13 +22,14 @@ function printFontsAss() {
 function printUsedFontsMatroska () {
 	local subsTracks="$(echo $json | jq -r '.tracks  | map( select (.codec=="SubStationAlpha") | .properties.codec_id  +";"+ (.id | tostring) ) | join("\n") ')"
 	local IFS="$nl"
+	local rnd="$(shuf -i 0-42694269426942 -n1)"
 	printf '[\n'>"${TEMPFOLDER}/mkvextractArgs.tmp"
 	for track in $subsTracks
 	do
 		local IFS=";"
 		local codec id
 		read codec id<<<$track
-		printf '\t"'${id}':'$1'_track'${id}'.'$(echo ${codec: -3} | tr '[:upper:]' '[:lower:]')'"'>>"${TEMPFOLDER}/mkvextractArgs.tmp"
+		printf '\t"'${id}':'$TEMPFOLDER'/mkvfontman_'$rnd'_'$1'_track'${id}'.'$(echo ${codec: -3} | tr '[:upper:]' '[:lower:]')'"'>>"${TEMPFOLDER}/mkvextractArgs.tmp"
 		# If it's not the last track
 		[[ "$track" = "$(tail -n 1 <<<$subsTracks)" ]] || printf ','>>"${TEMPFOLDER}/mkvextractArgs.tmp"
 		printf '\n'>>"${TEMPFOLDER}/mkvextractArgs.tmp"
@@ -44,6 +45,7 @@ function printUsedFontsMatroska () {
 		printFontsAss "$1_track${id}.$(echo ${codec: -3} | tr '[:upper:]' '[:lower:]')"
 	done
 	rm "${TEMPFOLDER}/mkvextractArgs.tmp"
+	rm "${TEMPFOLDER}/mkvfontman_${rnd}_"*
 }
 
 # Prints all fonts attached in a Matroska file passed as $1 by extracting them into a font store
