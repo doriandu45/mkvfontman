@@ -7,6 +7,7 @@ nl=${nl%q}
 
 # Default config
 TEMPFOLDER="/tmp"
+FONTSTORE="fontstore"
 
 # Prints all fonts used by an .ass or .ssa file passed as $1
 function printFontsAss() {
@@ -42,7 +43,7 @@ function printUsedFontsMatroska () {
 		local IFS=";"
 		local codec id
 		read codec id<<<$track
-		printFontsAss "$1_track${id}.$(echo ${codec: -3} | tr '[:upper:]' '[:lower:]')"
+		printFontsAss "$TEMPFOLDER/mkvfontman_${rnd}_$1_track${id}.$(echo ${codec: -3} | tr '[:upper:]' '[:lower:]')"
 	done
 	rm "${TEMPFOLDER}/mkvextractArgs.tmp"
 	rm "${TEMPFOLDER}/mkvfontman_${rnd}_"*
@@ -59,7 +60,7 @@ function printAttachedFontsMatroska() {
 		local IFS=";"
 		local id name
 		read id name<<<$file
-		printf '\t"'${id}':fontstore/%s"' "$name">>"${TEMPFOLDER}/mkvextractArgs.tmp"
+		printf '\t"'${id}':'$FONTSTORE'/%s"' "$name">>"${TEMPFOLDER}/mkvextractArgs.tmp"
 		# If it's not the last track
 		[[ "$file" = "$(tail -n 1 <<<$attachFiles)" ]] || printf ','>>"${TEMPFOLDER}/mkvextractArgs.tmp"
 		printf '\n'>>"${TEMPFOLDER}/mkvextractArgs.tmp"
@@ -72,7 +73,7 @@ function printAttachedFontsMatroska() {
 		local IFS=";"
 		local id name
 		read id name<<<$file
-		printf '%s;%s\n' "$name" "$(fc-scan "fontstore/$name" -f "%{family}\n")"
+		printf '%s;%s\n' "$name" "$(fc-scan "${FONTSTORE}/$name" -f "%{family}\n")"
 	done
 	rm "${TEMPFOLDER}/mkvextractArgs.tmp"
 }
@@ -141,9 +142,9 @@ function parseFontList() {
 # TODO: Use a lookup table instead of scanning each file in the fontstore each time we want to add a font
 function parseFontStore() {
 	local IFS="$nl"
-	for file in $(ls fontstore)
+	for file in $(ls $FONTSTORE)
 	do
-		local fontName="$(fc-scan "fontstore/$file" -f "%{family}\n")"
+		local fontName="$(fc-scan "${FONTSTORE}/$file" -f "%{family}\n")"
 		local foundFont=false
 		IFS=","
 		for testedFontName in $fontName
@@ -211,13 +212,13 @@ function cleanMatroska() {
 	then
 		for file in "${fontsToAdd[@]}"
 		do
-			mime="$(file --mime-type -b "fontstore/$file")"
+			mime="$(file --mime-type -b "${FONTSTORE}/$file")"
 			printf '\t"--attachment-name",\n'>>"${TEMPFOLDER}/mkvmegreArgs.tmp"
 			printf '\t"%s",\n' "$file">>"${TEMPFOLDER}/mkvmegreArgs.tmp"
 			printf '\t"--attachment-mime-type",\n'>>"${TEMPFOLDER}/mkvmegreArgs.tmp"
 			printf '\t"%s",\n' "$mime">>"${TEMPFOLDER}/mkvmegreArgs.tmp"
 			printf '\t"--attach-file",\n'>>"${TEMPFOLDER}/mkvmegreArgs.tmp"
-			printf '\t"fontstore/%s"' "$file">>"${TEMPFOLDER}/mkvmegreArgs.tmp"
+			printf '\t"'$FONTSTORE'/%s"' "$file">>"${TEMPFOLDER}/mkvmegreArgs.tmp"
 			# If it's not the last file
 			[[ "$file" = "${fontsToAdd[-1]}" ]] || printf ','>>"${TEMPFOLDER}/mkvmegreArgs.tmp"
 			printf '\n'>>"${TEMPFOLDER}/mkvmegreArgs.tmp"
