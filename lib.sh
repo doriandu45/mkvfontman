@@ -46,7 +46,7 @@ function printUsedFontsMatroska () {
 		printFontsAss "$TEMPFOLDER/mkvfontman_${rnd}_$1_track${id}.$(echo ${codec: -3} | tr '[:upper:]' '[:lower:]')"
 	done
 	rm "${TEMPFOLDER}/mkvextractArgs.tmp"
-	rm "${TEMPFOLDER}/mkvfontman_${rnd}_"*
+	rm -r "${TEMPFOLDER}/mkvfontman_${rnd}_"*
 }
 
 # Prints all fonts attached in a Matroska file passed as $1 by extracting them into a font store
@@ -73,7 +73,7 @@ function printAttachedFontsMatroska() {
 		local IFS=";"
 		local id name
 		read id name<<<$file
-		printf '%s;%s\n' "$name" "$(fc-scan "${FONTSTORE}/$name" -f "%{family}\n")"
+		printf '%s;%s\n' "$name" "$(fc-scan "${FONTSTORE}/$name" -f "%{family}")"
 	done
 	rm "${TEMPFOLDER}/mkvextractArgs.tmp"
 }
@@ -82,7 +82,7 @@ function printAttachedFontsMatroska() {
 function parseMkv() {
 	json="$(mkvmerge -J "$1")"
 	local IFS="$nl"
-	availableFonts=( $(printAttachedFontsMatroska "$1") )
+	availableFonts=( $(printAttachedFontsMatroska "$1" | sort | uniq) )
 	neededFonts=( $(printUsedFontsMatroska "$1" | sort | uniq) )
 	missingFonts=( "${neededFonts[@]}" )
 	uselessFonts=( "${availableFonts[@]}" )
@@ -106,7 +106,7 @@ function parseFontList() {
 			do
 				if [[ "$testedEmbeddedFontname" = "$testedFont" ]]
 				then
-					usedFonts+=( "${embeddedFilename} ($testedEmbeddedFontname)" )
+					usedFonts+=( "${embeddedFilename};$testedEmbeddedFontname" )
 					IFS="$nl"
 					# We remove the font from the missing list
 					for i in "${!missingFonts[@]}"
@@ -182,6 +182,9 @@ function cleanMatroska() {
 	# Remove useless fonts
 	if [[ "${#uselessFonts[@]}" != "0" ]]
 	then
+		local lastFile lastNames
+		IFS=";"
+		read lastFile lastNames<<<${uselessFonts[-1]}
 		printf '\t"--attachments",\n'>>"${TEMPFOLDER}/mkvmegreArgs.tmp"
 		printf '\t"!'>>"${TEMPFOLDER}/mkvmegreArgs.tmp"
 		local IFS="$nl"
@@ -195,16 +198,20 @@ function cleanMatroska() {
 			for file in $attachFiles
 			do
 				local IFS=";"
-				local id name
-				read id name<<<$file
-				printf $id>>"${TEMPFOLDER}/mkvmegreArgs.tmp"
-				# If it's not the last file
-				[[ "$file" = "$(tail -n 1 <<<$attachFiles)" ]] || printf ','>>"${TEMPFOLDER}/mkvmegreArgs.tmp"
+				local id filename
+				read id filename<<<$file
+				if [[ "$filename" = "$fontFile" ]]
+				then
+					printf $id>>"${TEMPFOLDER}/mkvmegreArgs.tmp"
+					# If it's not the last file
+					[[ "$filename" = "$lastFile" ]] || printf ','>>"${TEMPFOLDER}/mkvmegreArgs.tmp"
+					break
+				fi
 			done
-			printf '"'>>"${TEMPFOLDER}/mkvmegreArgs.tmp"
-			[[ "${#fontsToAdd[@]}" != "0" ]] && printf ','>>"${TEMPFOLDER}/mkvmegreArgs.tmp"
-			printf '\n'>>"${TEMPFOLDER}/mkvmegreArgs.tmp"
 		done
+		printf '"'>>"${TEMPFOLDER}/mkvmegreArgs.tmp"
+		[[ "${#fontsToAdd[@]}" != "0" ]] && printf ','>>"${TEMPFOLDER}/mkvmegreArgs.tmp"
+		printf '\n'>>"${TEMPFOLDER}/mkvmegreArgs.tmp"
 	fi
 	
 	# Add missing fonts
@@ -225,7 +232,7 @@ function cleanMatroska() {
 		done
 	fi
 	printf ']'>>"${TEMPFOLDER}/mkvmegreArgs.tmp"
-	mkvmerge -o "${1%.*}_clean.${1: -3}" "$1" @"${TEMPFOLDER}/mkvmegreArgs.tmp"
+	mkvmerge -o "${1%.*}_clean.${1: -3}" @"${TEMPFOLDER}/mkvmegreArgs.tmp" "$1"
 	rm "${TEMPFOLDER}/mkvmegreArgs.tmp"
 }
 
